@@ -8,6 +8,7 @@ import {
   Send,
   RotateCcw,
   Sparkles,
+  ChevronDown,
 } from "lucide-react";
 import ChatMessage, { MessageItem } from "./ChatMessage";
 import {
@@ -31,12 +32,14 @@ export default function AskBansiChat() {
   const [isTyping, setIsTyping] = useState(false);
   const [hasUnread, setHasUnread] = useState(true);
   const [showTooltip, setShowTooltip] = useState(false);
+  const [mobileHeight, setMobileHeight] = useState<number | null>(null);
 
   // Messages state
   const [messages, setMessages] = useState<MessageItem[]>([]);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const chatContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Ensure client-side only mounting for hydration safety
   useEffect(() => {
@@ -51,6 +54,53 @@ export default function AskBansiChat() {
     ]);
   }, []);
 
+  // Adapt to Mobile Visual Viewport (Virtual Keyboard resize handler)
+  useEffect(() => {
+    if (!isOpen) {
+      setMobileHeight(null);
+      return;
+    }
+
+    const updateHeight = () => {
+      if (window.innerWidth < 640) {
+        // On mobile, use visualViewport if available, or innerHeight
+        const vHeight = window.visualViewport
+          ? window.visualViewport.height
+          : window.innerHeight;
+        setMobileHeight(vHeight);
+      } else {
+        setMobileHeight(null);
+      }
+    };
+
+    updateHeight();
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", updateHeight);
+      window.visualViewport.addEventListener("scroll", updateHeight);
+    }
+    window.addEventListener("resize", updateHeight);
+
+    return () => {
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener("resize", updateHeight);
+        window.visualViewport.removeEventListener("scroll", updateHeight);
+      }
+      window.removeEventListener("resize", updateHeight);
+    };
+  }, [isOpen]);
+
+  // Lock background body scroll on mobile while chat is open
+  useEffect(() => {
+    if (isOpen && window.innerWidth < 640) {
+      const originalStyle = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.body.style.overflow = originalStyle;
+      };
+    }
+  }, [isOpen]);
+
   // Scroll to bottom smoothly
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     messagesEndRef.current?.scrollIntoView({ behavior });
@@ -61,8 +111,11 @@ export default function AskBansiChat() {
       setHasUnread(false);
       setTimeout(() => {
         scrollToBottom("auto");
-        inputRef.current?.focus();
-      }, 80);
+        // On desktop, auto-focus input. On mobile, avoid auto-focusing on open so keyboard doesn't abruptly block view
+        if (window.innerWidth >= 640) {
+          inputRef.current?.focus();
+        }
+      }, 100);
     }
   }, [isOpen, scrollToBottom]);
 
@@ -175,6 +228,13 @@ export default function AskBansiChat() {
     ]);
   };
 
+  // When input is focused on mobile, scroll conversation up so user sees what they type
+  const handleInputFocus = () => {
+    setTimeout(() => {
+      scrollToBottom("smooth");
+    }, 280);
+  };
+
   // Don't render until client mounted to prevent hydration mismatches
   if (!mounted) {
     return null;
@@ -182,8 +242,12 @@ export default function AskBansiChat() {
 
   return (
     <>
-      {/* Floating Chat Trigger Button */}
-      <div className="fixed bottom-5 right-5 sm:bottom-6 sm:right-6 z-[9999] flex items-center">
+      {/* Floating Chat Trigger Button (Hidden on mobile when chat is open so it never covers the input) */}
+      <div
+        className={`fixed bottom-5 right-5 sm:bottom-6 sm:right-6 z-[9999] items-center ${
+          isOpen ? "hidden sm:flex" : "flex"
+        }`}
+      >
         {/* Tooltip on hover (desktop only) */}
         {!isOpen && showTooltip && (
           <div
@@ -225,16 +289,32 @@ export default function AskBansiChat() {
         </button>
       </div>
 
-      {/* Floating Chat Window Panel */}
+      {/* Chat Window Panel:
+          - On Mobile: Edge-to-edge full screen, dynamically adapting to mobileHeight (keyboard safe)
+          - On Desktop: Floating rounded card at bottom-[96px] right-6
+      */}
       {isOpen && (
         <div
+          ref={chatContainerRef}
           role="dialog"
           aria-label="Ask Bansi Chat Assistant"
-          className="fixed bottom-[84px] sm:bottom-[96px] right-3 sm:right-6 z-[9999] w-[calc(100vw-24px)] max-w-[380px] h-[520px] max-h-[calc(100dvh-110px)] bg-white dark:bg-[#0E1522] border border-gray-200 dark:border-white/10 rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden backdrop-blur-md animate-in fade-in slide-in-from-bottom-2 duration-200 pointer-events-auto"
+          style={mobileHeight ? { height: `${mobileHeight}px` } : undefined}
+          className="fixed inset-0 sm:inset-auto sm:bottom-[96px] sm:right-6 z-[9999] w-full sm:w-[380px] h-full sm:h-[520px] sm:max-h-[calc(100dvh-110px)] bg-white dark:bg-[#0E1522] border-0 sm:border border-gray-200 dark:border-white/10 rounded-none sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden backdrop-blur-md animate-in fade-in sm:slide-in-from-bottom-2 duration-200 pointer-events-auto"
         >
           {/* Header */}
           <div className="px-4 py-3 bg-gradient-to-r from-coral-500 via-[#FF5757] to-[#E83E3E] text-white flex items-center justify-between shadow-sm shrink-0">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2.5">
+              {/* Mobile Back / Dismiss Button */}
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                className="sm:hidden p-1 -ml-1 text-white/90 hover:text-white rounded-lg active:scale-95 transition-transform cursor-pointer"
+                aria-label="Close chat"
+                title="Back"
+              >
+                <ChevronDown className="w-6 h-6" />
+              </button>
+
               <div className="relative w-9 h-9 rounded-full overflow-hidden border-2 border-white/70 bg-white/20 shrink-0">
                 <Image
                   src="/images/bansi-cutout.png"
@@ -284,7 +364,7 @@ export default function AskBansiChat() {
           </div>
 
           {/* Messages Area */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-2 select-text bg-[#FAFAFA] dark:bg-[#0A0F1A]">
+          <div className="flex-1 overflow-y-auto p-4 space-y-2 select-text bg-[#FAFAFA] dark:bg-[#0A0F1A] overscroll-contain">
             {/* Suggested Question Pills (Shown initially) */}
             {messages.length <= 2 && (
               <div className="mb-4 pt-1">
@@ -336,7 +416,7 @@ export default function AskBansiChat() {
           </div>
 
           {/* Chat Footer / Input Form */}
-          <div className="p-3 bg-white dark:bg-[#0E1522] border-t border-gray-200 dark:border-white/10 shrink-0">
+          <div className="p-3 bg-white dark:bg-[#0E1522] border-t border-gray-200 dark:border-white/10 shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -350,6 +430,7 @@ export default function AskBansiChat() {
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
                 onKeyDown={handleInputKeyDown}
+                onFocus={handleInputFocus}
                 placeholder="Ask something about Bansi..."
                 aria-label="Ask something about Bansi"
                 disabled={isTyping}
